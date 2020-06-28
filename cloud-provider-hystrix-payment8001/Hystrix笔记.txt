@@ -1,0 +1,95 @@
+                                 ***********************Hystrix*********************
+                                 *   服务端: cloud-provider-hystrix-payment8001     *
+                                 *                                                 *
+                                 *   客户端: cloud-consumer-feign-hystrix-order80   *
+                                 ***************************************************
+                    ################^^^^服务降级^^^^################
+         问题: 1.在小量访问情况下， paymentInfo_ok  方法 是没有压力的 秒响应，
+                 在高并发的情况下，如果都去访问 paymentInfo_TimeOut方法（耗时3秒）的话就会引起大量资源去处理这个请求
+                 tomcat的默认的工作线程数被打满了，没有多余的线程来分解压力和处理。从而导致 paymentInfo_ok 访问也过慢 产生连锁效应!!!!
+
+       解决:    ①.使用 Hystrix 服务降级，设置自身调用超时时间的峰值，峰值内可以正常运行，超过了需要有兜底的方法处理，作服务降级fallback
+           例子:   启动类 开启Hystrix ===>>>> @EnableCircuitBreaker
+                   在需要降级的方法上添加注解
+                   @HystrixCommand(fallbackMethod = "paymentInfo_TimeOutHandler", commandProperties = {
+                           @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "3000")  //3秒钟以内就是正常的业务逻辑
+                   })
+                   //服务降级调用方法
+                    public String paymentInfo_TimeOutHandler(Integer id) {
+                           return "线程名:" + Thread.currentThread().getName() + "paymentInfo_TimeOut方法降级==>请稍候再试！！！！";
+
+                    }
+               ②. 一旦调用服务方法失败并抛出了错误信息后，会自动调用@HystrixCommand标注好的fallbackMethod调用类中的指定方法
+
+               ③. 当存在服务与服务之间调用的时候， 如果服务提供方出现大量请求导致响应缓慢，那么服务消费方也会出现相同情况这样会产生
+                    扇出效应 导致服务雪崩， 服务消费方也可以设定 服务降级！！！
+
+        问题:  2. 每个业务方法对应一个兜底的方法（降级方法），代码膨胀
+              解决: ①. 使用 @DefaultProperties在当前业务类指定通用服务降级方法，除个别核心业务方法指定自己独有的服务降级方法
+                         其它业务方法走普通降级方法，通用和独享的分开避免代码的膨胀合理减少代码
+                         在需要降级的方法加上  @HystrixCommand 注解 开启服务降级（注解中无需指定方法默认走全局通用）
+              3. 业务逻辑方法和服务降级方法柔在一起耦合度极高，服务降级，客户端去调用服务端，碰上服务端宕机或关闭
+              解决: ①.客户端去调用服务端提供的方法，会有一个Feign公共接口，只需要为Feign客户端定义的接口添加一个服务降级处理的实现类即可实现解耦
+                            #################### 自定义实现类 ####################
+                      @Component
+                      public class PaymentFallbackService implements PaymentHystrixService{
+                          @Override
+                          public String paymentInfo_ok(Integer id) {
+                              return "解耦后 服务降级方法---paymentInfo_ok--- (┬＿┬)";
+                          }
+
+                          @Override
+                          public String paymentInfo_TimeOut(Integer id) {
+                              return "解耦后 服务降级方法---paymentInfo_TimeOut--- (┬＿┬)";
+                          }
+                      }
+                      #################### Feign客户端定义的接口 ##################(fallback属性 指定的是服务降级方法的实现类)
+                      @FeignClient(value = "CLOUD-PROVIDER-HYSTRIX-PAYMENT",fallback = PaymentFallbackService.class)
+                      @Component
+                      public interface PaymentHystrixService {
+
+                          @GetMapping("/payment/hystrix/ok/{id}")
+                          String paymentInfo_ok(@PathVariable("id") Integer id);
+
+
+                          @GetMapping("/payment/hystrix/timeout/{id}")
+                          String paymentInfo_TimeOut(@PathVariable("id") Integer id);
+
+
+                      }
+                       #################### yml配置文件 ##################
+                      feign:
+                        hystrix:
+                          enabled: true #如果处理自身的容错就开启。开启方式与生产端不一样。
+
+                  ################^^^^服务熔断^^^^################
+
+              断路器： “断路器”本身是一种开关装置，当某个服务单元发生故障监控(类似熔断保险丝)，
+                      向调用方法返回一个符合预期的、可处理的备选响应(FallBack)，而不是长时间的等待或者抛出调用方法无法处理的异常，
+                      这样就保证了服务调用方的线程不会被长时间、不必要地占用，从而避免了故障在分布式系统中的蔓延。乃至雪崩。
+
+              服务熔断： 熔断机制是应对雪崩效应的一种微服务链路保护机制，
+                       当扇出链路的某个微服务不可用或者响应时间太长时，会进行服务的降级，进而熔断该节点微服务的调用，快速返回”错误”的响应信息。
+                       当检测到该节点微服务响应正常后恢复调用链路，在SpringCloud框架机制通过Hystrix实现，
+                       Hystrix会监控微服务见调用的状况，当失败的调用到一个阈值，缺省是5秒内20次调用失败就会启动熔断机制，
+                       熔断机制的注解是@HystrixCommand、
+              解决：               服务熔断方法
+                      @HystrixCommand(fallbackMethod = "paymentCircuitBreaker_fallback",commandProperties = {
+                              @HystrixProperty(name = "circuitBreaker.enabled",value = "true"),  //是否开启断路器
+                              @HystrixProperty(name = "circuitBreaker.requestVolumeThreshold",value = "10"),   //请求次数
+                              @HystrixProperty(name = "circuitBreaker.sleepWindowInMilliseconds",value = "10000"),  //时间范围
+                              @HystrixProperty(name = "circuitBreaker.errorThresholdPercentage",value = "60"), //失败率达到多少后跳闸
+                      })
+                      public String paymentCircuitBreaker(@PathVariable("id") Integer id)
+                      {
+                        涉及到服务熔断的3个重要参数:
+                                ① 快照时间窗
+                         1:快照时间窗:断路器确定是否打开需要统计- 些请求和错误数据，而统计的时间范围就是快照时间窗,默认为最近的10秒。
+                                ② 请求总数阈值
+                         2:请求总数阀值:在快照时间窗内,必须满足请求总数阀值才有资格熔断。默认为20,意味着在10秒内,如果该hystrix命令的调用次数不足20次,
+                                      即使所有的请求都超时或其他原因失败，断路器都不会打开。
+                                ③ 错误百分比阈值
+                         3:错误百分比阀值:当请求总数在快照时间窗内超过了阀值,比如发生了10次调用,如果在这10次调用中,有6次发生了超时异常,也就是超过
+                                        60%的错误百分比,在默认设定60%阀值情况下，这时候就会将断路器打开。
+
+                      }

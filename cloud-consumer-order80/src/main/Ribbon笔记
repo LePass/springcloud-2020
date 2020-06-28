@@ -1,0 +1,14 @@
+##########################Ribbon################################
+更换Ribbon 负载均衡策略
+        1.自定义配置类
+        # 自定义配置类不能放在@ComponentScan 所扫描的当前包下的以及子包  （@SpringBootApplication）
+          否则自定义的Ribbon 配置类就会被所以的Ribbon客户端共享 导致不能达到特殊化目的
+        @Configuration
+        public class MySelfRule {
+            @Bean
+            public IRule myRule() {
+                return new RoundRobinRule();
+            }
+        }
+        2. 启动
+         @RibbonClient(name = "cloud-order-service",configuration = com.myrule.MySelfRule.class)
