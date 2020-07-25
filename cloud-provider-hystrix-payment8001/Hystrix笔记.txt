@@ -3,6 +3,7 @@
                                  *                                                 *
                                  *   客户端: cloud-consumer-feign-hystrix-order80   *
                                  ***************************************************
+                                    监控平台: cloud-consumer-hystrix-dashboard9001
                     ################^^^^服务降级^^^^################
          问题: 1.在小量访问情况下， paymentInfo_ok  方法 是没有压力的 秒响应，
                  在高并发的情况下，如果都去访问 paymentInfo_TimeOut方法（耗时3秒）的话就会引起大量资源去处理这个请求

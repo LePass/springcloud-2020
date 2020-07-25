@@ -6,16 +6,13 @@ import org.springframework.cloud.netflix.eureka.EnableEurekaClient;
 
 /**
  * @author Wangx
- * @create 2020/5/22
+ * @create 2020/7/1
  * @since 1.0.0
  */
-@SpringBootApplication
 @EnableEurekaClient
-/*
-@RibbonClient(name = "cloud-order-service",configuration = com.myrule.MySelfRule.class)  //更改负载均衡策略
-*/
-public class OrderMain80 {
+@SpringBootApplication
+public class ConfigClientMain3366 {
     public static void main(String[] args) {
-        SpringApplication.run(OrderMain80.class, args);
+        SpringApplication.run(ConfigClientMain3366.class, args);
     }
 }

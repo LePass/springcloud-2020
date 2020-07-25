@@ -1,0 +1,174 @@
+                             ***********************Config**********************
+                             *          服务端: cloud-config-center-3344        *
+                             *                                                 *
+                             *          客户端: cloud-config-client-3355,3366   *
+                             ***************************************************
+   问题:
+       微服务意味着要将单体应用中的业务拆分成一个个子服务, 每个服务的粒度相对较小，因此系统中会出现大量的服务。由于每个服务
+       都需要必要的配置信息才能运行，所以一套集中式的、动态的配置管理设施是必不可少的。
+   解决:
+       SpringCloud Config
+            为微服务架构中的微服务提供集中化的外部配置支持，配置服务器为各个不同微服务应用的所有环境提供了一个中心化的外部配置。
+        1.不同环境不同配置，动态化的更新配置，分环境部署如: dev/test/prod/beta/release
+        2.运行期间动态调整配置，不再需要在每个服务部署的机器上编写配置文件，服务会向配置中心统一拉取配置自己的信息
+        3.当配置发生变动时，服务不需要重启即可感知到配置的变化并应用新的配置
+
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^创建config 服务端^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             依赖:
+                     <!--config 服务端-->
+                    <dependency>
+                        <groupId>org.springframework.cloud</groupId>
+                        <artifactId>spring-cloud-config-server</artifactId>
+                    </dependency>
+             配置yml:
+                spring:
+                  application:
+                    name: cloud-config-center #注册到微服务的名称
+                  ^^^^^^核心^^^^^
+                  cloud:
+                    config:
+                      server:
+                        git:
+                          uri: https://github.com/LePass/springcloud-config.git    #存放配置文件地址（github,码云）
+                          #搜索目录
+                          search-paths:
+                           - springcloud-config
+                          username: wangxin98wx@163.com
+                          password: DAxie123.00
+                      #读取分支
+                      label: master
+             github配置文件名字:
+                               ①.config-dev.yml
+                               ②.config-prod.yml
+                               ③.config-test.yml
+                               {application}-{profile}.yml
+             启动: @EnableConfigServer（注解）
+             读取配置文件:
+                  ①. /{label}/{application}-{profile}.yml（最推荐使用这种方式）
+                   例:http://localhost:3344/master/config-dev.yml
+                      master :分支名称   config-dev.yml:配置文件名称
+                  ②. /{application}-{profile}.yml
+                   例: http://localhost:3344/config-dev.yml
+                  ③. /{application}-{profile}[/{label}]
+                   例: http://localhost:3344/config/dev/master  (返回json格式)
+
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^创建config 客户端^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            依赖:  <dependency>
+                        <!--config 客户端-->
+                        <groupId>org.springframework.cloud</groupId>
+                        <artifactId>spring-cloud-starter-config</artifactId>
+                  </dependency>
+            配置yml(bootstrap):
+                        spring:
+                          application:
+                            name: config-client
+                          cloud:
+                            discovery:
+                              enabled: true
+                            config:
+                              label: master #分支名称
+                              name: config #配置文件名称
+                              profile: dev #读取后缀名称
+                              uri: http://localhost:3344
+                          rabbitmq:
+                            host: localhost
+                            port: 5672
+                            username: guest
+                            password: guest
+            例子:
+                 @RestController
+                 public class ConfigClientController {
+
+                     @Value("${config.info}")
+                     private String configInfo;
+
+                     @GetMapping("/configInfo")
+                     public String getConfigInfo(){
+                         return configInfo;
+                     }
+                 }
+            启动: 优先启动服务端(尝试读取github上的配置文件)，在启动客户端读取配置文件！！！！！
+
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^Config客户端之动态刷新^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            问题:  Linux运维修改GitHub上的配置文件内容做调整，服务端(3344)刷新就可以更新配置文件，客户端(3355)配置文件还是没有更新,
+                  重启客户端(3355)可以绝决问题但是每次重启也不是办法??????
+            解决: 为了避免每次更新配置都要重启客户端微服务3355(Config客户端之动态刷新)
+                 依赖:
+                    <!--actuator监控（手动刷新）-->
+                    <dependency>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-actuator</artifactId>
+                    </dependency>
+                 yml:
+                    #暴露监控端口
+                    management:
+                      endpoints:
+                        web:
+                          exposure:
+                            include: "*"
+                 注解:
+                 @RefreshScope  //局部参数刷新(${config.info}对应github配置文件参数)
+                 @RestController
+                 public class ConfigClientController {
+
+                     @Value("${config.info}")
+                     private String configInfo;
+
+                     @GetMapping("/configInfo")
+                     public String getConfigInfo(){
+                         return configInfo;
+                     }
+                 }
+                 启动:  Linux运维修改GitHub上的配置文件内容做调整，在发送 curl -X POST "http://localhost:3355/actuator/refresh"
+                       POST请求刷新客户端(3355),这样成功实现了客户端3355刷新到最新配置内容避免了服务的重启！！！！！！！
+
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^SpringCloud Bus 消息总线^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            问题:由于动态刷新可以解决配置文件更新问题，但是由于为微服务模块较多，每一个服务都去发一次POST请求去刷新就显得很麻烦，
+                所以可否广播，一次通知，处处生效？？
+
+            解决: Spring Cloud Bus配合Spring Cloud Config使用可以实现配置的动态刷新，
+                 Spring Cloud Bus能管理和传播分分布式系统间的消息，就像一个分布式执行器，可用于广播状态更改、事件推送，也可以当作微服务间的通信通道
+                 支持两种消息代理：RabbitMQ和Kafka,
+            思想:
+                1) 利用消息总线触发一个客户端(3355或3366)/bus/refresh,而刷新所有客户端的配置
+                2) 利用消息总线触发一个服务端(3344)ConfigServer的/bus/refresh端点,而刷新所有客户端的配置（更加推荐）
+                第一种不适合的原因:
+                                1.打破了微服务的职责单一性，因为微服务本身是业务模块，它本不应该承担配置刷新职责
+                                2.破坏了微服务各节点的对等性
+                                3.有一定的局限性。例如，微服务在迁移时，它的网络地址常常会发生变化，此时如果想要做到自动刷新，那就会增加更多的修改
+                需要提前配置好RabbitMQ
+            依赖:
+                 给服务端(3344)客户端(3355，3366)都加上
+                 <!--springCloud bus消息总线-->
+                 <dependency>
+                     <groupId>org.springframework.cloud</groupId>
+                     <artifactId>spring-cloud-starter-bus-amqp</artifactId>
+                 </dependency>
+            yml:
+                ^^^额外配置^^^
+                服务端(3344)
+                rabbitmq:
+                    host: localhost
+                    port: 5672
+                    username: guest
+                    password: guest
+                management:
+                  endpoints:
+                    web:
+                      exposure:
+                        include: 'bus-refresh'  #固定写法
+                 客户端(3355，3366)
+                 rabbitmq:
+                     host: localhost
+                     port: 5672
+                     username: guest
+                     password: guest
+            启动:
+                更改GitHub配置文件，在发送POST请求，一次修改，广播通知，处处生效
+                curl -X POST "http://localhost:3344/actuator/bus-refresh"
+                http://localhost:3344(服务端)/actuator/bus-refresh(固定)
+
+              定点通知:比如只通知更新客户端3355，不更新3366，修改POST请求
+              公式: http://localhost:配置中心的端口号/actuator/bus-refresh/{destination}
+                   /bus/refresh请求不再发送到具体的服务实例上，而是发给config server并通过destination参数类指定需要更新配置的服务或实例
+               例: curl -X POST "http://localhost:3344/actuator/bus-refresh/config-client:3355"

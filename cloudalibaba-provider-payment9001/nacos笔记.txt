@@ -1,0 +1,184 @@
+                     ***********************Nacos**********************
+                     *  服务端: cloudalibaba-provider-payment9001,9002  *
+                     *                                                 *
+                     *  客户端: cloudalibaba-provider-payment9002       *
+                     ***************************************************
+
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^Nacos简介^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        Nacos:
+               一个更易于构建云原生应用的动态服务发现，配置管理和服务管理中心!!!!
+               Nacos就是注册中心+配置中心的组合 等价于{Nacos = Eureka+Config+Bus}
+        启动:
+              Github下载Nacos(https://github.com/alibaba/nacos/tags),当前使用1.1.4稳定版
+              Windows 启动命令: cmd startup.cmd(bin目录)  关闭命令: cmd shutdown.cmd
+              Linux 启动命令:  sh startup.sh -m standalone  关闭命令: sh shutdown.sh
+              地址: http://localhost:8848/nacos   账户密码:nacos
+        对比:
+
+
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^Nacos作为服务注册中心^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                          【搭建Nacos的服务提供者(9001,9002)】
+        注册服务:
+           依赖:
+                <!--nacos-->
+                <dependency>
+                    <groupId>com.alibaba.cloud</groupId>
+                    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+                </dependency>
+           配置(yml):
+                server:
+                  port: 9001
+                spring:
+                  application:
+                    name: nacos-payment-provider  #服务名称注册到nacos中的名称
+                  cloud:
+                    nacos:
+                      discovery:
+                        server-addr: localhost:8848  #nacso地址 本地启动(默认端口8848)
+
+                #暴露所有端点
+                management:
+                  endpoints:
+                    web:
+                      exposure:
+                        include: "*"
+           主启动类:
+                  需加上 @EnableDiscoveryClient //将一个微服务注册到Nacos上
+                  @SpringBootApplication
+                  @EnableDiscoveryClient
+                  public class PaymentMain9002 {
+                      public static void main(String[] args) {
+                          SpringApplication.run(PaymentMain9002.class,args);
+                      }
+                  }
+
+                           【搭建Nacos的服务消费者(83)】
+        注册服务:
+          依赖:
+               <!--nacos-->
+               <dependency>
+                   <groupId>com.alibaba.cloud</groupId>
+                   <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+               </dependency>
+          配置(yml):
+               server:
+                 port: 83
+
+               spring:
+                 application:
+                   name: nacos-order-consumer
+                 cloud:
+                   nacos:
+                     discovery:
+                       server-addr: localhost:8848  #nacso地址 本地启动
+
+               service-url:
+                 nacos-user-service: http://nacos-payment-provider #消费者将去访问的微服务名称（注册成功进nacos的微服务提供者
+          主启动类:
+              @SpringBootApplication
+              @EnableDiscoveryClient
+              public class OrderNacosMain83 {
+                  public static void main(String[] args) {
+                      SpringApplication.run(OrderNacosMain83.class,args);
+                  }
+              }
+          业务类:
+                @RestController
+                @Slf4j
+                public class OrderNacosController {
+
+                    @Resource
+                    private RestTemplate restTemplate;
+
+                    @Value("${service-url.nacos-user-service}")
+                    private String serverURL;
+
+
+                    @GetMapping(value = "/consumer/payment/nacos/{id}")
+                    public String paymentInfo(@PathVariable("id") Long id)
+                    {
+                        //通过RestTemplate调用服务提供者提供的服务(9001,9002)
+                        return restTemplate.getForObject(serverURL+"/payment/nacos/"+id,String.class);
+                    }
+
+                }
+
+                //配置RestTemplate 并开启负载均衡
+                @Configuration
+                public class RestConfig {
+                    @Bean
+                    @LoadBalanced //开启RestTemplate负载均衡
+                    public RestTemplate restTemplate(){
+                        return new RestTemplate();
+                    }
+                }
+
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^Nacos作为服务配置中心^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                     ***********************Nacos**********************
+                     *                                                *
+                     *   服务名:cloudalibaba-consumer-nacos-order83    *
+                     *                                                *
+                     **************************************************
+           依赖:
+                <!--nacos作为配置中心依赖-->
+                <dependency>
+                    <groupId>com.alibaba.cloud</groupId>
+                    <artifactId>spring-cloud-alibaba-nacos-config</artifactId>
+                </dependency>
+                <!--nacos作为注册中心依赖-->
+                <dependency>
+                    <groupId>com.alibaba.cloud</groupId>
+                    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+                </dependency>
+           配置(yml):
+                 bootstrap.yml:
+                              Nacos同springcloud-config一样，在项目初始化的时候，要保证从配置中心拉取对应的配置，
+                              才能保证项目的正常启动！！springboot中的配置文件加载是存在优先级的bootstrap优先级高于application.yml
+                      server:
+                        port: 3377
+                      spring:
+                        application:
+                          name: nacos-config-client
+                        cloud:
+                          nacos:
+                            discovery:
+                              #server-addr: 192.168.153.128:1111   #集群模式 采用nginx代理
+                              server-addr: localhost:8848  # 单机版  指定服务注册地址
+                            config:
+                              #server-addr: 192.168.153.128:1111   #集群模式 采用nginx代理
+                              server-addr: localhost:8848   #单机版 指定拉取配置地址
+                              file-extension: yml #指定yml格式的配置
+
+                 application.yml:
+                       spring:
+                         profiles:
+                           #active: info
+                           active: dev  #设置环境 (开发)  指定要读取配置文件的环境
+                           #active: test  #测试
+
+           主启动类:
+                 @SpringBootApplication
+                 @EnableDiscoveryClient
+                 public class NacosConfigClientMain3377 {
+                     public static void main(String[] args) {
+                         SpringApplication.run(NacosConfigClientMain3377.class,args);
+                     }
+                 }
+           业务类:
+                @RestController
+                @RefreshScope //支持Nacos动态刷新配置文件(springCloud原生注解 实现配置自动刷新)
+                public class ConfigClientController {
+                    @Value("${config.info}")  //读取nacos配置中心配置文件的内容
+                    private String configInfo;
+
+                    @GetMapping("/config/info")
+                    public String getConfigInfo() {
+                        return configInfo;
+                    }
+                }
+           规则:
+                            Nacos中的DataId的组成格式与SpringBoot配置文件中的匹配规则
+             公式:${spring.application.name}-${spring.profile.active}.${spring.cloud.nacos.config.file-extension}
+             prefix默认为spring.application.name的值
+             spring.profile.active既为当前环境对应的profile,可以通过配置项spring.profile.active
+             file-exetension为配置内容的数据格式，可以通过配置项spring.cloud.nacos.config.file-extension配置

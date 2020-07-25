@@ -7,16 +7,22 @@ spring:
     config:
       server:
         git:
-          uri: git@github.com:LePass/springcloud-config.git
+          uri: https://github.com/LePass/springcloud-config.git
           #搜索目录
           search-paths:
-           - springcloud-config
+            - springcloud-config
+          username: wangxin98wx@163.com
+          password: DAxie123.00
       #读取分支
       label: master
       discovery:
         enabled: true
-
-
+  #mp配置
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
 
 
 #注册到eureka
@@ -24,3 +30,9 @@ eureka:
   client:
     service-url:
       defaultZone: http://eureka7001.com:7001/eureka/
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: 'bus-refresh'
